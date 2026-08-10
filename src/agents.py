@@ -6,10 +6,15 @@ Each agent is a thin wrapper around an LLM call with a structured prompt
 and a structured JSON output contract. Later agents (Risk, Architecture,
 Adoption, Portfolio, Executive Summary) follow the same pattern and plug
 into the same orchestrator interface.
+
+Now grounds its output in retrieved RBI regulatory text via the
+ai-adoption-rag-core API, falling back to ungrounded output if that
+service isn't reachable.
 """
 
 import json
 import os
+import requests
 from openai import OpenAI
 from dotenv import load_dotenv
 
@@ -19,6 +24,8 @@ client = OpenAI(
     api_key=os.environ.get("GROQ_API_KEY"),
     base_url="https://api.groq.com/openai/v1"
 )
+
+RAG_API_URL = os.environ.get("RAG_API_URL", "http://127.0.0.1:8000")
 
 VALUE_AGENT_SYSTEM_PROMPT = """You are the Business Value Agent inside an Enterprise AI Adoption Advisor system.
 
@@ -30,6 +37,12 @@ estimates to sound impressive.
 You will be given:
 1. A use case description (free text)
 2. Optional portfolio context: cost, sector, domain, current process maturity
+3. Optional retrieved regulatory context: excerpts from actual RBI source documents relevant to this use case
+
+When retrieved regulatory context is provided, let it inform value drivers tied to compliance efficiency,
+reduced audit burden, or avoided regulatory penalty, referencing what the source document actually says
+rather than general knowledge. If a retrieved excerpt is marked as draft status, phrase anything drawn from
+it as "the draft guidance proposes" or similar, never as "RBI requires," since draft guidance is not yet binding.
 
 Return your evaluation as strict JSON with this exact schema, and nothing else:
 
@@ -59,6 +72,36 @@ Do not include markdown formatting, code fences, or any text outside the JSON ob
 """
 
 
+def retrieve_context(query: str, n_results: int = 3) -> list:
+    """
+    Call the ai-adoption-rag-core API to pull relevant RBI regulatory chunks.
+    Returns an empty list if the service isn't reachable, so the agent
+    degrades gracefully to ungrounded output rather than failing outright.
+    """
+    try:
+        response = requests.post(
+            f"{RAG_API_URL}/retrieve",
+            json={"query": query, "n_results": n_results},
+            timeout=5,
+        )
+        response.raise_for_status()
+        return response.json().get("results", [])
+    except Exception as e:
+        print(f"Warning: RAG retrieval unavailable ({e}). Proceeding without grounding.")
+        return []
+
+
+def format_retrieved_context(chunks: list) -> str:
+    if not chunks:
+        return ""
+    parts = ["Retrieved regulatory context:"]
+    for c in chunks:
+        parts.append(
+            f"\n[Source: {c['title']} | File: {c['file']} | Status: {c['status']}]\n{c['text']}"
+        )
+    return "\n".join(parts)
+
+
 def evaluate_business_value(use_case_description: str, portfolio_context: dict = None) -> dict:
     """
     Run the Business Value Agent against a single AI use case.
@@ -74,6 +117,11 @@ def evaluate_business_value(use_case_description: str, portfolio_context: dict =
     user_content = f"Use case description:\n{use_case_description}"
     if portfolio_context:
         user_content += f"\n\nPortfolio context:\n{json.dumps(portfolio_context, indent=2)}"
+
+    retrieved = retrieve_context(use_case_description)
+    context_block = format_retrieved_context(retrieved)
+    if context_block:
+        user_content += f"\n\n{context_block}"
 
     response = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
