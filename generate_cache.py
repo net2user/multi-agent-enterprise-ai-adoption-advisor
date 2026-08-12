@@ -9,20 +9,25 @@ needed for those paths going forward. "Write my own use case" and the
 optional "Run live portfolio assessment anyway" button in Portfolio
 View still call the API live, on purpose.
 
-This script deliberately reuses each use case's individual agent
-scores to build the portfolio ranking input, rather than re-running
-all five agents a second time through run_full_portfolio_assessment,
-cutting total token cost roughly in half compared to running both
-separately.
+Saves incrementally after each use case, and skips any use case
+already present in the existing cache file, so a rate limit failure
+partway through doesn't lose completed work or require a full re-run.
 
-Cost estimate: eight use cases at roughly seven calls each (five agents,
-one executive summary, one roadmap), plus one final portfolio ranking
-call, using your account's own recent average of about 872 tokens per
-call, this totals approximately 49,000 tokens. Check your Groq usage
-page first and run this when the day's usage is low.
+Set MAX_NEW_USE_CASES to deliberately cap how many NEW (not already
+cached) use cases run in this invocation, leaving remaining token
+budget free for other work the same day. Defaults to no cap.
+Example: MAX_NEW_USE_CASES=5 PYTHONPATH=src python generate_cache.py
+
+Cost note: with RAG grounding now active, real observed cost is closer
+to 13,000-14,000 tokens per use case (seven calls, several of them now
+carrying retrieved regulatory context), not the original ~6,100 token
+estimate from before grounding was added. Groq's llama-3.3-70b-versatile
+daily limit is 100,000 tokens, so a full eight use case run (~110K)
+does not fit in one day even fresh. Check your Groq usage page first.
 """
 
 import json
+import os
 import time
 
 from orchestrator import run_single_use_case_assessment
@@ -30,14 +35,61 @@ from executive_summary_agent import generate_executive_summary
 from implementation_roadmap_agent import generate_implementation_roadmap
 from portfolio_agent import prioritize_portfolio
 
+CACHE_FILE = "data/cached_assessments.json"
+MAX_NEW_USE_CASES = int(os.environ.get("MAX_NEW_USE_CASES", "999"))
+
+import os as _os
+import time as _time
+import requests as _requests
+
+_rag_url = _os.environ.get("RAG_API_URL", "http://127.0.0.1:8000")
+print(f"Warming up RAG service at {_rag_url}...")
+for _attempt in range(10):
+    try:
+        _r = _requests.get(f"{_rag_url}/health", timeout=15)
+        if _r.status_code == 200:
+            print("RAG service is awake and ready.")
+            break
+    except Exception:
+        pass
+    print(f"  Not ready yet, waiting (attempt {_attempt + 1}/10)...")
+    _time.sleep(5)
+else:
+    print("WARNING: RAG service did not respond after 50s. Proceeding anyway, agents will fall back to ungrounded if this continues.")
+
 with open("data/use_case_portfolio.json") as f:
     portfolio = json.load(f)["use_cases"]
 
-single_use_case_cache = {}
+if os.path.exists(CACHE_FILE):
+    with open(CACHE_FILE) as f:
+        existing = json.load(f)
+    single_use_case_cache = existing.get("single_use_case", {})
+    print(f"Found existing cache with {len(single_use_case_cache)} use case(s), will skip those and resume.")
+else:
+    single_use_case_cache = {}
+
 per_use_case_assessments = {}
 scored_for_ranking = []
+new_this_run = 0
 
 for uc in portfolio:
+    if uc["id"] in single_use_case_cache:
+        cached = single_use_case_cache[uc["id"]]
+        per_use_case_assessments[uc["id"]] = cached["assessment"]
+        scored_for_ranking.append({
+            "use_case_id": uc["id"],
+            "title": uc["title"],
+            "value_score": cached["assessment"]["value"]["value_score"],
+            "risk_score": cached["assessment"]["risk"]["risk_score"],
+            "complexity_score": cached["assessment"]["architecture"]["complexity_score"],
+            "adoption_score": cached["assessment"]["adoption"]["adoption_score"],
+        })
+        continue
+
+    if new_this_run >= MAX_NEW_USE_CASES:
+        print(f"Reached MAX_NEW_USE_CASES cap ({MAX_NEW_USE_CASES}), stopping here to leave token budget for other work today.")
+        break
+
     print(f"Running {uc['id']}: {uc['title']}...")
 
     context = {
@@ -87,23 +139,35 @@ for uc in portfolio:
         "complexity_score": assessment["architecture"]["complexity_score"],
         "adoption_score": assessment["adoption"]["adoption_score"],
     })
+    new_this_run += 1
 
-    print("  Done. Pausing briefly before the next use case...")
+    with open(CACHE_FILE, "w") as f:
+        json.dump({
+            "single_use_case": single_use_case_cache,
+            "portfolio_view": {
+                "ranked_portfolio": None,
+                "per_use_case_assessments": per_use_case_assessments,
+            },
+        }, f, indent=2)
+
+    print(f"  Done, saved to {CACHE_FILE}. Pausing briefly before the next use case...")
     time.sleep(3)
 
-print("Running portfolio ranking using scores already collected above...")
-ranked_portfolio = prioritize_portfolio(scored_for_ranking)
+if len(scored_for_ranking) == len(portfolio):
+    print("All use cases present. Running portfolio ranking...")
+    ranked_portfolio = prioritize_portfolio(scored_for_ranking)
 
-output = {
-    "single_use_case": single_use_case_cache,
-    "portfolio_view": {
-        "ranked_portfolio": ranked_portfolio,
-        "per_use_case_assessments": per_use_case_assessments,
-    },
-}
+    with open(CACHE_FILE, "w") as f:
+        json.dump({
+            "single_use_case": single_use_case_cache,
+            "portfolio_view": {
+                "ranked_portfolio": ranked_portfolio,
+                "per_use_case_assessments": per_use_case_assessments,
+            },
+        }, f, indent=2)
 
-with open("data/cached_assessments.json", "w") as f:
-    json.dump(output, f, indent=2)
-
-print("\nDone. Saved to data/cached_assessments.json")
-print(f"Cached {len(single_use_case_cache)} use cases plus one portfolio ranking.")
+    print(f"\nDone. Saved to {CACHE_FILE}")
+    print(f"Cached {len(single_use_case_cache)} use cases plus one portfolio ranking.")
+else:
+    print(f"\n{len(scored_for_ranking)}/{len(portfolio)} use cases cached so far ({new_this_run} new this run).")
+    print("Portfolio ranking skipped until all use cases are cached. Re-run this script (same command, or with a fresh MAX_NEW_USE_CASES) once ready, it will resume from here.")

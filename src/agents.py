@@ -82,7 +82,7 @@ def retrieve_context(query: str, n_results: int = 3) -> list:
         response = requests.post(
             f"{RAG_API_URL}/retrieve",
             json={"query": query, "n_results": n_results},
-            timeout=5,
+            timeout=30,
         )
         response.raise_for_status()
         return response.json().get("results", [])
