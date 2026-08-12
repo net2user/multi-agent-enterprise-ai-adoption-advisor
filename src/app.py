@@ -224,7 +224,7 @@ with tab_single:
                 assessment_succeeded = True
             except RateLimitError:
                 notify_owner("Enterprise AI Adoption Advisor: a visitor hit the rate limit on Single Use Case.")
-                st.error("We're experiencing high demand right now. Please wait a minute and try again.")
+                st.error("You've hit today's demo usage limit. Please check back tomorrow once it resets.")
             except APIError:
                 st.error("Something went wrong reaching the AI service. Please try again in a moment.")
             except Exception:
@@ -352,7 +352,7 @@ with tab_portfolio:
                         result = run_full_portfolio_assessment(portfolio)
                 except RateLimitError:
                     notify_owner("Enterprise AI Adoption Advisor: a visitor hit the rate limit on Portfolio View live refresh.")
-                    st.error("We're experiencing high demand right now. Please try again in a few minutes.")
+                    st.error("You've hit today's demo usage limit. Please check back tomorrow once it resets.")
                     portfolio_succeeded = False
                 except APIError:
                     st.error("Something went wrong reaching the AI service partway through this run. Please try again in a moment.")
@@ -378,7 +378,7 @@ with tab_portfolio:
             except RateLimitError:
                 progress_text.empty()
                 notify_owner("Enterprise AI Adoption Advisor: a visitor hit the rate limit running the full Portfolio View.")
-                st.error("We're experiencing high demand right now, this run makes many calls in sequence. Please wait a few minutes and try again.")
+                st.error("You've hit today's demo usage limit, this run makes many calls in sequence. Please check back tomorrow once it resets.")
             except APIError:
                 progress_text.empty()
                 st.error("Something went wrong reaching the AI service partway through this run. Please try again in a moment.")
