@@ -5,19 +5,15 @@ Ranks a portfolio of AI use cases against each other, using the outputs
 of the Value, Risk, Architecture, and Adoption agents rather than
 re-deriving its own scores from scratch. This agent's job is synthesis
 and sequencing, not fresh evaluation.
+
+Uses the shared model fallback chain from groq_client.py rather than
+calling Groq directly, so a rate limit or permissions block on the
+primary model doesn't crash this agent.
 """
 
 import json
-import os
-from openai import OpenAI
-from dotenv import load_dotenv
 
-load_dotenv()
-
-client = OpenAI(
-    api_key=os.environ.get("GROQ_API_KEY"),
-    base_url="https://api.groq.com/openai/v1"
-)
+from groq_client import call_groq
 
 PORTFOLIO_AGENT_SYSTEM_PROMPT = """You are the Portfolio Prioritization Agent inside an Enterprise AI Adoption Advisor system.
 
@@ -60,24 +56,15 @@ Do not include markdown formatting, code fences, or any text outside the JSON ob
 def prioritize_portfolio(use_cases_with_scores: list) -> dict:
     """
     Run the Portfolio Prioritization Agent against a list of already-scored use cases.
-
-    Args:
-        use_cases_with_scores: list of dicts, each containing at minimum
-            use_case_id, title, value_score, risk_score, complexity_score, adoption_score
-
-    Returns:
-        dict matching the Portfolio Agent JSON schema
     """
     user_content = f"Use case portfolio with agent scores:\n{json.dumps(use_cases_with_scores, indent=2)}"
 
-    response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+    response = call_groq(
         messages=[
             {"role": "system", "content": PORTFOLIO_AGENT_SYSTEM_PROMPT},
             {"role": "user", "content": user_content},
         ],
         temperature=0.3,
-        response_format={"type": "json_object"},
     )
 
     return json.loads(response.choices[0].message.content)

@@ -9,19 +9,15 @@ other agents already estimated, the Architecture agent's pilot weeks
 and the Data Readiness agent's data prep weeks specifically, and
 sequences them into a coherent plan rather than inventing new numbers
 from scratch.
+
+Uses the shared model fallback chain from groq_client.py rather than
+calling Groq directly, so a rate limit or permissions block on the
+primary model doesn't crash this agent.
 """
 
 import json
-import os
-from openai import OpenAI
-from dotenv import load_dotenv
 
-load_dotenv()
-
-client = OpenAI(
-    api_key=os.environ.get("GROQ_API_KEY"),
-    base_url="https://api.groq.com/openai/v1"
-)
+from groq_client import call_groq
 
 IMPLEMENTATION_ROADMAP_SYSTEM_PROMPT = """You are the Implementation Roadmap Agent inside an Enterprise AI Adoption Advisor system.
 
@@ -100,14 +96,12 @@ def generate_implementation_roadmap(use_case_description: str, value_result: dic
     if data_readiness_result:
         user_content += f"\n\nData Readiness agent assessment:\n{json.dumps(data_readiness_result, indent=2)}"
 
-    response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+    response = call_groq(
         messages=[
             {"role": "system", "content": IMPLEMENTATION_ROADMAP_SYSTEM_PROMPT},
             {"role": "user", "content": user_content},
         ],
         temperature=0.3,
-        response_format={"type": "json_object"},
     )
 
     return json.loads(response.choices[0].message.content)

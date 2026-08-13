@@ -8,19 +8,15 @@ Data Readiness asks whether the data actually exists in usable form to
 make the AI system work at all. A use case can be low risk and still
 fail because the underlying data is fragmented, poorly labeled, or
 locked in systems that do not talk to each other.
+
+Uses the shared model fallback chain from groq_client.py rather than
+calling Groq directly, so a rate limit or permissions block on the
+primary model doesn't crash this agent.
 """
 
 import json
-import os
-from openai import OpenAI
-from dotenv import load_dotenv
 
-load_dotenv()
-
-client = OpenAI(
-    api_key=os.environ.get("GROQ_API_KEY"),
-    base_url="https://api.groq.com/openai/v1"
-)
+from groq_client import call_groq
 
 DATA_READINESS_SYSTEM_PROMPT = """You are the Data Readiness Agent inside an Enterprise AI Adoption Advisor system.
 
@@ -71,14 +67,12 @@ def evaluate_data_readiness(use_case_description: str, portfolio_context: dict =
     if portfolio_context:
         user_content += f"\n\nPortfolio context:\n{json.dumps(portfolio_context, indent=2)}"
 
-    response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+    response = call_groq(
         messages=[
             {"role": "system", "content": DATA_READINESS_SYSTEM_PROMPT},
             {"role": "user", "content": user_content},
         ],
         temperature=0.3,
-        response_format={"type": "json_object"},
     )
 
     return json.loads(response.choices[0].message.content)
