@@ -24,7 +24,7 @@ client = OpenAI(
 
 MODEL_CANDIDATES = os.environ.get(
     "GROQ_MODEL_CANDIDATES",
-    "llama-3.3-70b-versatile,groq/compound-mini,groq/compound,allam-2-7b,llama-3.1-8b-instant"
+    "openai/gpt-oss-120b,groq/compound-mini,groq/compound,qwen/qwen3.6-27b,openai/gpt-oss-20b,llama-3.3-70b-versatile,llama-3.1-8b-instant"
 ).split(",")
 
 

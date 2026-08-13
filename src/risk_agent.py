@@ -5,23 +5,19 @@ Identifies compliance, security, privacy, and operational concerns for a
 proposed AI use case. Same call pattern as the Value Agent so the
 orchestrator can treat all agents uniformly.
 
-Now grounds its output in retrieved RBI regulatory text via the
+Grounds its output in retrieved RBI regulatory text via the
 ai-adoption-rag-core API, falling back to ungrounded output if that
 service isn't reachable.
+
+Now uses the shared model fallback chain from groq_client.py, same as
+every other agent, instead of its own separate inline copy.
 """
 
 import json
 import os
 import requests
-from openai import OpenAI
-from dotenv import load_dotenv
 
-load_dotenv()
-
-client = OpenAI(
-    api_key=os.environ.get("GROQ_API_KEY"),
-    base_url="https://api.groq.com/openai/v1"
-)
+from groq_client import call_groq
 
 RAG_API_URL = os.environ.get("RAG_API_URL", "http://127.0.0.1:8000")
 
@@ -76,11 +72,6 @@ Do not include markdown formatting, code fences, or any text outside the JSON ob
 
 
 def retrieve_context(query: str, n_results: int = 3) -> list:
-    """
-    Call the ai-adoption-rag-core API to pull relevant RBI regulatory chunks.
-    Returns an empty list if the service isn't reachable, so the agent
-    degrades gracefully to ungrounded output rather than failing outright.
-    """
     try:
         response = requests.post(
             f"{RAG_API_URL}/retrieve",
@@ -106,9 +97,6 @@ def format_retrieved_context(chunks: list) -> str:
 
 
 def evaluate_risk(use_case_description: str, portfolio_context: dict = None) -> dict:
-    """
-    Run the Risk & Governance Agent against a single AI use case.
-    """
     user_content = f"Use case description:\n{use_case_description}"
     if portfolio_context:
         user_content += f"\n\nPortfolio context:\n{json.dumps(portfolio_context, indent=2)}"
@@ -118,14 +106,12 @@ def evaluate_risk(use_case_description: str, portfolio_context: dict = None) -> 
     if context_block:
         user_content += f"\n\n{context_block}"
 
-    response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+    response = call_groq(
         messages=[
             {"role": "system", "content": RISK_AGENT_SYSTEM_PROMPT},
             {"role": "user", "content": user_content},
         ],
         temperature=0.2,
-        response_format={"type": "json_object"},
     )
 
     return json.loads(response.choices[0].message.content)
@@ -135,7 +121,7 @@ if __name__ == "__main__":
     with open("data/use_case_portfolio.json") as f:
         portfolio = json.load(f)
 
-    uc = portfolio["use_cases"][0]  # UC-001: procurement operations
+    uc = portfolio["use_cases"][0]
     context = {
         "sector": uc["sector"],
         "domain": uc["domain"],
